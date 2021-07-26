@@ -23,4 +23,10 @@ def upper_columns(df: DataFrame, cols: list) -> DataFrame:
 
 # COMMAND ----------
 
-# just a change of the code to trigger release
+# another release trigger one more change
+
+# COMMAND ----------
+
+# MAGIC %sql 
+# MAGIC 
+# MAGIC SHOW DATABASES;

@@ -1,12 +1,14 @@
 # Grab variables from the specific variable group
 variables:
-- group: 'Nutter Testing'
+- group: 'Databricks-environment'
 
 trigger:
   batch: true
   branches:
+    exclude:
+      - 'master'
     include:
-    - '*'
+      - '*'
   paths:
     exclude:
       - README.md
@@ -31,6 +33,7 @@ stages:
   condition: |
     and(
       ne(variables['Build.SourceBranch'], 'refs/heads/releases'),
+      ne(variables['Build.SourceBranch'], 'refs/heads/master'),
       not(startsWith(variables['Build.SourceBranch'], 'refs/tags/v'))
     )
   jobs:
@@ -60,7 +63,7 @@ stages:
     - script: |
         set -x
         echo "Checking out the $(Build.SourceBranchName) branch"
-        curl -s -n -X GET -o /tmp/staging-repo-info.json "$DATABRICKS_HOST/api/2.0/workspace/get-status" -H "Authorization: Bearer $DATABRICKS_TOKEN" -d '{"path":"/Repos/Staging/databricks-nutter-projects-demo"}'
+        curl -s -n -X GET -o /tmp/staging-repo-info.json "$DATABRICKS_HOST/api/2.0/workspace/get-status" -H "Authorization: Bearer $DATABRICKS_TOKEN" -d '{"path":"/Repos/Staging/repos-automation"}'
         cat /tmp/staging-repo-info.json
         export STAGING_REPOS_ID=$(cat /tmp/staging-repo-info.json|grep '"object_type":"REPO"'|sed -e 's|^.*"object_id":\([0-9]*\).*$|\1|')
         curl -s -n -X PATCH -o "/tmp/$(Build.SourceBranchName)-out.json" "$DATABRICKS_HOST/api/2.0/repos/$STAGING_REPOS_ID" \
@@ -68,15 +71,15 @@ stages:
         cat "/tmp/$(Build.SourceBranchName)-out.json"
         grep -v error_code "/tmp/$(Build.SourceBranchName)-out.json"
       env:
-        DATABRICKS_HOST: $(DATABRICKS_HOST)
-        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+        DATABRICKS_HOST: $(STAGING_DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(STAGING_DATABRICKS_TOKEN)
       displayName: 'Update Staging project'
 
     - script: |
-        nutter run '/Repos/Staging/databricks-nutter-projects-demo/' --cluster_id $(CLUSTER_ID) --recursive --junit_report --timeout 500
+        nutter run '/Repos/Staging/repos-automation/' --cluster_id $(STAGING_CLUSTER_ID) --recursive --junit_report --timeout 500
       env:
-        DATABRICKS_HOST: $(DATABRICKS_HOST)
-        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+        DATABRICKS_HOST: $(STAGING_DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(STAGING_DATABRICKS_TOKEN)
       displayName: 'Execute Nutter tests'
 
     - task: PublishTestResults@2
@@ -88,7 +91,10 @@ stages:
 
 - stage: onRelease
   condition: |
-    eq(variables['Build.SourceBranch'], 'refs/heads/releases')
+    or(
+      eq(variables['Build.SourceBranch'], 'refs/heads/releases'),
+      eq(variables['Build.SourceBranch'], 'refs/heads/master')
+    )
   jobs:
   - job: onReleaseJob
     pool:
@@ -109,31 +115,19 @@ stages:
         displayName: 'Checkout & Build.Reason: $(Build.Reason) & Build.SourceBranchName: $(Build.SourceBranchName)'
 
       - script: |
-          python -m pip install --upgrade pip nutter
-        displayName: 'Install dependencies'
-
-      - script: |
           set -x
-          echo "Checking out the releases branch"
-          curl -s -n -X GET -o /tmp/prod-repo-info.json "$DATABRICKS_HOST/api/2.0/workspace/get-status" -H "Authorization: Bearer $DATABRICKS_TOKEN" -d '{"path":"/Repos/Staging/databricks-nutter-projects-demo"}'
+          echo "Checking out the master branch"
+          curl -s -n -X GET -o /tmp/prod-repo-info.json "$DATABRICKS_HOST/api/2.0/workspace/get-status" -H "Authorization: Bearer $DATABRICKS_TOKEN" -d '{"path":"/Repos/Production/repos-automation"}'
           cat /tmp/prod-repo-info.json
-          export STAGING_REPOS_ID=$(cat /tmp/prod-repo-info.json|grep '"object_type":"REPO"'|sed -e 's|^.*"object_id":\([0-9]*\).*$|\1|')
-          curl -s -n -X PATCH -o "/tmp/releases-out.json" "$DATABRICKS_HOST/api/2.0/repos/$STAGING_REPOS_ID" \
-            -H "Authorization: Bearer $DATABRICKS_TOKEN" -d "{\"branch\": \"releases\"}"
-          cat "/tmp/releases-out.json"
-          grep -v error_code "/tmp/releases-out.json"
+          export PRODUCTION_REPOS_ID=$(cat /tmp/prod-repo-info.json|grep '"object_type":"REPO"'|sed -e 's|^.*"object_id":\([0-9]*\).*$|\1|')
+          curl -s -n -X PATCH -o "/tmp/master-out.json" "$DATABRICKS_HOST/api/2.0/repos/$PRODUCTION_REPOS_ID" \
+            -H "Authorization: Bearer $DATABRICKS_TOKEN" -d "{\"branch\": \"master\"}"
+          cat "/tmp/master-out.json"
+          grep -v error_code "/tmp/master-out.json"
         env:
-          DATABRICKS_HOST: $(DATABRICKS_HOST)
-          DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
-        displayName: 'Update Staging repository'
-
-# We can do a separate set of the tests for release branches
-      - script: |
-          nutter run '/Repos/Staging/databricks-nutter-projects-demo/' --cluster_id $(CLUSTER_ID) --recursive --junit_report --timeout 500
-        env:
-          DATABRICKS_HOST: $(DATABRICKS_HOST)
-          DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
-        displayName: 'Execute Nutter tests on release'
+          DATABRICKS_HOST: $(PROD_DATABRICKS_HOST)
+          DATABRICKS_TOKEN: $(PROD_DATABRICKS_TOKEN)
+        displayName: 'Update Production repository'
 
       - task: PublishTestResults@2
         condition: succeededOrFailed()
